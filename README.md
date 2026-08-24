@@ -1,6 +1,6 @@
 # Training Plan
 
-A separate, local-first personal training PWA built for a long-term training plan rather than the shared Name Workout app.
+A personal training PWA built for a long-term training plan.
 
 ## What is included
 
