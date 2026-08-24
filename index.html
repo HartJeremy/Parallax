@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#090909">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Training Plan">
+  <meta name="description" content="A local-first personal training plan and workout tracker.">
+  <title>Training Plan</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="#today" data-nav="today" aria-label="Training Plan home">
+        <img src="icon.svg" alt="" width="50" height="50">
+        <span><b>PERSONAL</b><strong>TRAINING</strong></span>
+      </a>
+      <div class="top-actions">
+        <button id="installBtn" class="ghost-btn hidden" type="button">Install</button>
+        <button id="settingsBtn" class="icon-btn" type="button" aria-label="Open data and settings">⚙</button>
+      </div>
+    </header>
+
+    <section class="goal-hero">
+      <div>
+        <p class="eyebrow">Primary goal</p>
+        <h1>IRONMAN<br><span>70.3 MAINE</span></h1>
+        <p id="heroPhaseText">Strength + aerobic base</p>
+      </div>
+      <div class="goal-badge">
+        <strong>2027</strong>
+        <span>Race year</span>
+      </div>
+    </section>
+
+    <nav class="main-nav" aria-label="Main sections">
+      <button type="button" class="nav-btn active" data-page="today">Today</button>
+      <button type="button" class="nav-btn" data-page="week">Week</button>
+      <button type="button" class="nav-btn" data-page="progress">Progress</button>
+      <button type="button" class="nav-btn" data-page="goals">Goals</button>
+      <button type="button" class="nav-btn" data-page="data">Data</button>
+    </nav>
+
+    <section id="page-today" class="page active" aria-labelledby="todayTitle">
+      <div class="section-toolbar">
+        <div>
+          <p id="todayDate" class="eyebrow">Today</p>
+          <h2 id="todayTitle">Today's Training</h2>
+        </div>
+        <div class="date-controls">
+          <button id="prevDayBtn" class="small-btn" type="button" aria-label="Previous day">‹</button>
+          <button id="todayBtn" class="small-btn" type="button">Today</button>
+          <button id="nextDayBtn" class="small-btn" type="button" aria-label="Next day">›</button>
+        </div>
+      </div>
+
+      <div class="completion-card">
+        <div>
+          <strong id="completionPct">0%</strong>
+          <span>complete</span>
+        </div>
+        <div class="progress-track"><span id="completionBar"></span></div>
+      </div>
+
+      <div id="todaySessions" class="session-list"></div>
+
+      <button id="addTodaySessionBtn" class="secondary full" type="button">+ Add workout</button>
+
+      <section class="card checkin-card">
+        <div class="card-heading compact-heading">
+          <div><p class="eyebrow">Readiness</p><h3>Daily check-in</h3></div>
+          <span id="checkinSaved" class="status-pill">Not saved</span>
+        </div>
+        <div class="checkin-grid">
+          <label><span>Energy</span><select id="energyInput"><option value="">Select</option><option value="1">1 · Very low</option><option value="2">2 · Low</option><option value="3">3 · Normal</option><option value="4">4 · Good</option><option value="5">5 · High</option></select></label>
+          <label><span>Soreness</span><select id="sorenessInput"><option value="">Select</option><option value="1">1 · None</option><option value="2">2 · Mild</option><option value="3">3 · Moderate</option><option value="4">4 · High</option><option value="5">5 · Very high</option></select></label>
+          <label><span>Sleep</span><select id="sleepInput"><option value="">Select</option><option value="1">1 · Poor</option><option value="2">2 · Below avg</option><option value="3">3 · Normal</option><option value="4">4 · Good</option><option value="5">5 · Excellent</option></select></label>
+          <label><span>Overall RPE</span><input id="rpeInput" type="number" min="1" max="10" inputmode="numeric" placeholder="1–10"></label>
+        </div>
+        <label class="block-label"><span>Notes</span><textarea id="checkinNotes" rows="3" placeholder="Optional: fatigue, pain, schedule, how the workout felt..."></textarea></label>
+        <button id="saveCheckinBtn" class="primary compact-primary" type="button">Save check-in</button>
+      </section>
+    </section>
+
+    <section id="page-week" class="page" aria-labelledby="weekTitle">
+      <div class="section-toolbar">
+        <div><p id="weekRange" class="eyebrow">This week</p><h2 id="weekTitle">Weekly Plan</h2></div>
+        <div class="date-controls">
+          <button id="prevWeekBtn" class="small-btn" type="button" aria-label="Previous week">‹</button>
+          <button id="thisWeekBtn" class="small-btn" type="button">This week</button>
+          <button id="nextWeekBtn" class="small-btn" type="button" aria-label="Next week">›</button>
+        </div>
+      </div>
+
+      <section class="week-summary card">
+        <div class="summary-stat"><span>Run</span><strong id="weekRunTotal">0 mi</strong></div>
+        <div class="summary-stat"><span>Bike</span><strong id="weekBikeTotal">0 min</strong></div>
+        <div class="summary-stat"><span>Strength</span><strong id="weekStrengthTotal">0</strong></div>
+        <div class="summary-stat"><span>Flexibility</span><strong id="weekFlexTotal">0</strong></div>
+      </section>
+
+      <div id="weekGrid" class="week-grid"></div>
+      <div class="week-actions">
+        <button id="editTemplateBtn" class="secondary" type="button">Edit weekly template</button>
+        <button id="resetWeekBtn" class="secondary" type="button">Reset this week from template</button>
+      </div>
+    </section>
+
+    <section id="page-progress" class="page" aria-labelledby="progressTitle">
+      <div class="section-toolbar">
+        <div><p class="eyebrow">Trends</p><h2 id="progressTitle">Progress</h2></div>
+        <button id="addMeasurementBtn" class="secondary" type="button">+ Measurement</button>
+      </div>
+
+      <div id="progressMetrics" class="metric-grid"></div>
+
+      <section class="card chart-card">
+        <div class="card-heading compact-heading">
+          <div><p class="eyebrow">Last 8 weeks</p><h3>Training volume</h3></div>
+        </div>
+        <div id="volumeChart" class="bar-chart" aria-label="Training volume by week"></div>
+      </section>
+
+      <section class="card chart-card">
+        <div class="card-heading compact-heading">
+          <div><p class="eyebrow">Body trend</p><h3>Weight and waist</h3></div>
+        </div>
+        <div id="bodyTrend" class="trend-list"></div>
+      </section>
+
+      <section class="card">
+        <div class="card-heading compact-heading">
+          <div><p class="eyebrow">History</p><h3>Measurements</h3></div>
+        </div>
+        <div id="measurementHistory" class="history-list"></div>
+      </section>
+    </section>
+
+    <section id="page-goals" class="page" aria-labelledby="goalsTitle">
+      <div class="section-toolbar">
+        <div><p class="eyebrow">Direction</p><h2 id="goalsTitle">Goals & Training Phases</h2></div>
+        <button id="addGoalBtn" class="secondary" type="button">+ Goal</button>
+      </div>
+
+      <section class="card phase-card">
+        <div class="card-heading compact-heading">
+          <div><p class="eyebrow">Current phase</p><h3 id="currentPhaseName">Strength + Aerobic Base</h3></div>
+          <button id="editPhaseBtn" class="text-btn" type="button">Edit</button>
+        </div>
+        <p id="currentPhaseDates" class="muted"></p>
+        <div id="currentPhaseFocus" class="pill-row"></div>
+      </section>
+
+      <div id="goalList" class="goal-list"></div>
+
+      <section class="card">
+        <div class="card-heading compact-heading">
+          <div><p class="eyebrow">Roadmap</p><h3>Training phases</h3></div>
+        </div>
+        <div id="phaseTimeline" class="timeline"></div>
+      </section>
+    </section>
+
+    <section id="page-data" class="page" aria-labelledby="dataTitle">
+      <div class="section-toolbar"><div><p class="eyebrow">Local first</p><h2 id="dataTitle">Data & Settings</h2></div></div>
+
+      <section class="card data-card">
+        <div class="data-row"><div><strong>Storage</strong><span>Workout history is stored in IndexedDB on this device.</span></div><em>Local</em></div>
+        <div class="data-row"><div><strong>Cloud sync</strong><span>Not enabled. The data model is ready to add it later.</span></div><em>Off</em></div>
+      </section>
+
+      <section class="card">
+        <div class="card-heading compact-heading"><div><p class="eyebrow">Backup</p><h3>Export / Import</h3></div></div>
+        <p class="muted">Export everything before changing devices or clearing browser data.</p>
+        <div class="button-grid">
+          <button id="exportJsonBtn" class="secondary" type="button">Export JSON backup</button>
+          <button id="exportCsvBtn" class="secondary" type="button">Export workout CSV</button>
+          <label class="secondary import-label">Import JSON<input id="importJsonInput" type="file" accept="application/json" hidden></label>
+        </div>
+        <p id="backupStatus" class="hint"></p>
+      </section>
+
+      <section class="card">
+        <div class="card-heading compact-heading"><div><p class="eyebrow">Preferences</p><h3>App settings</h3></div></div>
+        <div class="checkin-grid">
+          <label><span>Weight unit</span><select id="weightUnitInput"><option value="lb">Pounds (lb)</option></select></label>
+          <label><span>Distance unit</span><select id="distanceUnitInput"><option value="mi">Miles</option></select></label>
+        </div>
+        <label class="toggle-control"><input id="autoExpandInput" type="checkbox"><span>Keep workout details expanded by default</span></label>
+        <button id="saveSettingsBtn" class="primary compact-primary" type="button">Save settings</button>
+      </section>
+
+      <section class="card danger-card">
+        <div class="card-heading compact-heading"><div><p class="eyebrow danger-text">Reset</p><h3>Clear local data</h3></div></div>
+        <p class="muted">This deletes workouts, check-ins, measurements, goals and plan edits from this device.</p>
+        <button id="clearDataBtn" class="danger-btn" type="button">Clear all local data</button>
+      </section>
+    </section>
+  </main>
+
+  <dialog id="sessionDialog" class="modal">
+    <form id="sessionForm" method="dialog" class="modal-card">
+      <div class="modal-head"><div><p class="eyebrow">Workout</p><h2 id="sessionDialogTitle">Edit workout</h2></div><button class="icon-btn modal-close" value="cancel" type="button" aria-label="Close">×</button></div>
+      <input id="sessionIdInput" type="hidden">
+      <input id="sessionDateInput" type="hidden">
+      <div class="form-grid">
+        <label><span>Title</span><input id="sessionTitleInput" required maxlength="80"></label>
+        <label><span>Type</span><select id="sessionTypeInput"><option value="group">Group workout</option><option value="run">Run</option><option value="bike">Bike</option><option value="strength">Strength</option><option value="flexibility">Flexibility</option><option value="swim">Swim / dryland</option><option value="skill">Skill</option><option value="recovery">Recovery</option><option value="other">Other</option></select></label>
+        <label><span>Planned duration (min)</span><input id="sessionDurationInput" type="number" min="0" max="600" step="1"></label>
+        <label><span>Planned distance</span><input id="sessionDistanceInput" type="number" min="0" max="500" step="0.1"></label>
+      </div>
+      <label class="block-label"><span>Summary</span><input id="sessionSummaryInput" maxlength="140" placeholder="Short line shown when card is collapsed"></label>
+      <label class="block-label"><span>Instructions</span><textarea id="sessionInstructionsInput" rows="8" placeholder="One instruction per line"></textarea></label>
+      <label class="block-label"><span>Move to date</span><input id="sessionMoveDateInput" type="date"></label>
+      <label class="block-label"><span>Apply change to</span><select id="sessionScopeInput"><option value="day">This day only</option><option value="future">Future workouts from this template</option></select></label>
+      <div class="modal-actions">
+        <button id="deleteSessionBtn" class="danger-btn" type="button">Delete</button>
+        <button class="secondary modal-close" value="cancel" type="button">Cancel</button>
+        <button id="saveSessionBtn" class="primary" type="submit">Save workout</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="logDialog" class="modal">
+    <form id="logForm" method="dialog" class="modal-card">
+      <div class="modal-head"><div><p class="eyebrow">Actual</p><h2 id="logDialogTitle">Log workout</h2></div><button class="icon-btn modal-close" value="cancel" type="button" aria-label="Close">×</button></div>
+      <input id="logSessionIdInput" type="hidden">
+      <input id="logSessionDateInput" type="hidden">
+      <div id="logDynamicFields" class="form-grid"></div>
+      <label class="block-label"><span>Actual notes</span><textarea id="logNotesInput" rows="4" placeholder="Optional"></textarea></label>
+      <div class="modal-actions">
+        <button class="secondary modal-close" value="cancel" type="button">Cancel</button>
+        <button id="saveLogBtn" class="primary" type="submit">Save log</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="measurementDialog" class="modal">
+    <form id="measurementForm" method="dialog" class="modal-card">
+      <div class="modal-head"><div><p class="eyebrow">Progress</p><h2>Add measurement</h2></div><button class="icon-btn modal-close" value="cancel" type="button" aria-label="Close">×</button></div>
+      <div class="form-grid">
+        <label><span>Date</span><input id="measurementDateInput" type="date" required></label>
+        <label><span>Weight</span><input id="measurementWeightInput" type="number" min="50" max="500" step="0.1"></label>
+        <label><span>Waist (in)</span><input id="measurementWaistInput" type="number" min="20" max="80" step="0.1"></label>
+        <label><span>Max pull-ups</span><input id="measurementPullupsInput" type="number" min="0" max="100" step="1"></label>
+        <label><span>3-mile time</span><input id="measurementRunTimeInput" type="text" inputmode="numeric" placeholder="24:00"></label>
+        <label><span>Front split gap (in)</span><input id="measurementSplitGapInput" type="number" min="0" max="40" step="0.25"></label>
+      </div>
+      <label class="block-label"><span>Notes</span><textarea id="measurementNotesInput" rows="3"></textarea></label>
+      <div class="modal-actions"><button class="secondary modal-close" value="cancel" type="button">Cancel</button><button class="primary" type="submit">Save measurement</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="goalDialog" class="modal">
+    <form id="goalForm" method="dialog" class="modal-card">
+      <div class="modal-head"><div><p class="eyebrow">Goal</p><h2 id="goalDialogTitle">Edit goal</h2></div><button class="icon-btn modal-close" value="cancel" type="button" aria-label="Close">×</button></div>
+      <input id="goalIdInput" type="hidden">
+      <div class="form-grid">
+        <label><span>Goal</span><input id="goalTitleInput" required maxlength="100"></label>
+        <label><span>Category</span><select id="goalCategoryInput"><option>Endurance</option><option>Body Composition</option><option>Strength</option><option>Running</option><option>Mobility</option><option>Skill</option><option>Other</option></select></label>
+        <label><span>Target</span><input id="goalTargetInput" maxlength="80"></label>
+        <label><span>Target date</span><input id="goalDateInput" type="date"></label>
+      </div>
+      <label class="block-label"><span>Notes</span><textarea id="goalNotesInput" rows="4"></textarea></label>
+      <div class="modal-actions"><button id="deleteGoalBtn" class="danger-btn" type="button">Delete</button><button class="secondary modal-close" value="cancel" type="button">Cancel</button><button class="primary" type="submit">Save goal</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="phaseDialog" class="modal">
+    <form id="phaseForm" method="dialog" class="modal-card">
+      <div class="modal-head"><div><p class="eyebrow">Training phase</p><h2>Edit current phase</h2></div><button class="icon-btn modal-close" value="cancel" type="button" aria-label="Close">×</button></div>
+      <input id="phaseIdInput" type="hidden">
+      <div class="form-grid">
+        <label><span>Name</span><input id="phaseNameInput" required maxlength="80"></label>
+        <label><span>Start date</span><input id="phaseStartInput" type="date" required></label>
+        <label><span>End date</span><input id="phaseEndInput" type="date" required></label>
+      </div>
+      <label class="block-label"><span>Focus areas (comma separated)</span><input id="phaseFocusInput" placeholder="Strength, aerobic base, flexibility"></label>
+      <label class="block-label"><span>Notes</span><textarea id="phaseNotesInput" rows="4"></textarea></label>
+      <div class="modal-actions"><button class="secondary modal-close" value="cancel" type="button">Cancel</button><button class="primary" type="submit">Save phase</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="templateDialog" class="modal wide-modal">
+    <form id="templateForm" method="dialog" class="modal-card">
+      <div class="modal-head"><div><p class="eyebrow">Plan</p><h2>Edit weekly template</h2></div><button class="icon-btn modal-close" value="cancel" type="button" aria-label="Close">×</button></div>
+      <p class="muted">This controls future weeks. Edit individual days from the Today or Week screen when you need an exception.</p>
+      <div id="templateEditor" class="template-editor"></div>
+      <div class="modal-actions"><button class="secondary modal-close" value="cancel" type="button">Cancel</button><button class="primary" type="submit">Save weekly template</button></div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
