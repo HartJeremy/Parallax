@@ -4,7 +4,7 @@ import {
   getCheckin, saveCheckin, getMeasurements, saveMeasurement, deleteMeasurement,
   getGoals, saveGoal, deleteGoal, getPhases, savePhase,
   exportDatabase, importDatabase, reseed, updateFutureTemplateSessions
-} from './db.js?v=3';
+} from './db.js?v=4';
 
 const $ = (sel, root=document) => root.querySelector(sel);
 const $$ = (sel, root=document) => [...root.querySelectorAll(sel)];
@@ -362,6 +362,37 @@ function numberOrNull(value){
   const n=Number(value); return Number.isFinite(n)?n:null;
 }
 
+function goalCountdown(targetDate){
+  if(!targetDate) return {value:'Date TBD',label:'set target date'};
+  const today=parseDateOnly(todayIso);
+  const target=parseDateOnly(targetDate);
+  const diff=Math.ceil((target-today)/86400000);
+  if(diff>1) return {value:String(diff),label:'days'};
+  if(diff===1) return {value:'1',label:'day'};
+  if(diff===0) return {value:'Today',label:'target day'};
+  return {value:String(Math.abs(diff)),label:'days past'};
+}
+
+function renderGoalDashboard(goals,phase){
+  const primary=goals.find(g=>g.role==='primary') || goals[0];
+  const immediate=goals.find(g=>g.role==='immediate') || goals.find(g=>g.id!==primary?.id) || primary;
+  if(primary){
+    $('#primaryGoalTitle').textContent=primary.title;
+    $('#primaryGoalTarget').textContent=primary.target||'';
+    const c=goalCountdown(primary.targetDate);
+    $('#primaryGoalCountdown').textContent=c.value;
+    $('#primaryGoalCountdownLabel').textContent=c.label;
+  }
+  if(immediate){
+    $('#immediateGoalTitle').textContent=immediate.title;
+    $('#immediateGoalTarget').textContent=immediate.target||'';
+    const c=goalCountdown(immediate.targetDate);
+    $('#immediateGoalCountdown').textContent=c.value;
+    $('#immediateGoalCountdownLabel').textContent=c.label;
+  }
+  if(phase) $('#heroPhaseText').textContent=phase.name;
+}
+
 async function openLogEditor(sessionId,date=state.selectedDate){
   const day=await getDay(date,true);
   const session=findSession(day,sessionId);
@@ -596,9 +627,9 @@ async function renderGoals(){
     $('#currentPhaseDates').textContent=`${formatShortDate(phase.startDate)} – ${formatShortDate(phase.endDate)}`;
     $('#currentPhaseFocus').innerHTML=(phase.focus||[]).map(f=>`<span class="focus-pill">${escapeHtml(f)}</span>`).join('');
     $('#editPhaseBtn').dataset.phaseId=phase.id;
-    $('#heroPhaseText').textContent=phase.name;
   }
-  $('#goalList').innerHTML=goals.map(g=>`<article class="goal-card" data-goal-id="${g.id}"><div class="goal-top"><div><span class="type-pill">${escapeHtml(g.category)}</span><h3>${escapeHtml(g.title)}</h3></div><button class="text-btn edit-goal-btn" type="button">Edit</button></div><div class="goal-target">${escapeHtml(g.target||'')}</div>${g.notes?`<p>${escapeHtml(g.notes)}</p>`:''}${g.targetDate?`<p>Target: ${formatDate(g.targetDate,{month:'short',day:'numeric',year:'numeric'})}</p>`:''}</article>`).join('');
+  renderGoalDashboard(goals,phase);
+  $('#goalList').innerHTML=goals.map(g=>`<article class="goal-card" data-goal-id="${g.id}"><div class="goal-top"><div><span class="type-pill">${escapeHtml(g.category)}</span>${g.role&&g.role!=='standard'?`<span class="goal-role-pill ${g.role}">${escapeHtml(g.role)}</span>`:''}<h3>${escapeHtml(g.title)}</h3></div><button class="text-btn edit-goal-btn" type="button">Edit</button></div><div class="goal-target">${escapeHtml(g.target||'')}</div>${g.notes?`<p>${escapeHtml(g.notes)}</p>`:''}${g.targetDate?`<p>Target: ${formatDate(g.targetDate,{month:'short',day:'numeric',year:'numeric'})}</p>`:''}</article>`).join('');
   $('#phaseTimeline').innerHTML=phases.map(p=>`<div class="timeline-item"><span class="timeline-dot"></span><div class="timeline-copy"><strong>${escapeHtml(p.name)}</strong><span>${formatShortDate(p.startDate)} – ${formatShortDate(p.endDate)} · ${(p.focus||[]).map(escapeHtml).join(' · ')}</span></div></div>`).join('');
 }
 
@@ -610,6 +641,7 @@ async function openGoalEditor(id=null){
   $('#goalTitleInput').value=goal?.title||'';
   $('#goalCategoryInput').value=goal?.category||'Other';
   $('#goalTargetInput').value=goal?.target||'';
+  $('#goalRoleInput').value=goal?.role||'standard';
   $('#goalDateInput').value=goal?.targetDate||'';
   $('#goalNotesInput').value=goal?.notes||'';
   $('#goalDialogTitle').textContent=goal?'Edit goal':'Add goal';
@@ -619,7 +651,14 @@ async function openGoalEditor(id=null){
 
 async function saveGoalForm(){
   const id=$('#goalIdInput').value;
-  await saveGoal({id:id||undefined,title:$('#goalTitleInput').value.trim(),category:$('#goalCategoryInput').value,target:$('#goalTargetInput').value.trim(),targetDate:$('#goalDateInput').value,notes:$('#goalNotesInput').value.trim(),order:id?(await getGoals()).find(g=>g.id===id)?.order:Date.now()});
+  const role=$('#goalRoleInput').value;
+  const goals=await getGoals();
+  if(role==='primary'||role==='immediate'){
+    for(const g of goals){
+      if(g.id!==id && g.role===role){ g.role='standard'; await saveGoal(g); }
+    }
+  }
+  await saveGoal({id:id||undefined,title:$('#goalTitleInput').value.trim(),category:$('#goalCategoryInput').value,target:$('#goalTargetInput').value.trim(),targetDate:$('#goalDateInput').value,role,notes:$('#goalNotesInput').value.trim(),order:id?goals.find(g=>g.id===id)?.order:Date.now()});
   closeDialog($('#goalDialog'));
   showToast('Goal saved.');
   await renderGoals();

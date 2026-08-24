@@ -174,8 +174,8 @@ const DEFAULT_SETTINGS = {
 };
 
 const DEFAULT_GOALS = [
-  {id:'goal-703',title:'IRONMAN 70.3 Maine',category:'Endurance',target:'Complete in 2027',targetDate:'',notes:'Primary endurance goal. Build swim, bike and run capacity progressively.',order:1},
-  {id:'goal-weight',title:'Lean athletic body composition',category:'Body Composition',target:'About 155 lb while retaining muscle',targetDate:'2026-12-12',notes:'Use waist, strength, energy and appearance alongside scale weight rather than chasing weight alone.',order:2},
+  {id:'goal-703',title:'IRONMAN 70.3 Maine',category:'Endurance',target:'Complete in 2027',targetDate:'',role:'primary',notes:'Primary endurance goal. Build swim, bike and run capacity progressively.',order:1},
+  {id:'goal-weight',title:'Lean athletic body composition',category:'Body Composition',target:'About 155 lb while retaining muscle',targetDate:'2026-12-12',role:'immediate',notes:'Use waist, strength, energy and appearance alongside scale weight rather than chasing weight alone.',order:2},
   {id:'goal-pullups',title:'Pull-ups',category:'Strength',target:'20 clean reps',targetDate:'',notes:'Build progressively while keeping most training sets submaximal.',order:3},
   {id:'goal-run3',title:'3-mile run',category:'Running',target:'Sub-8:00/mile pace',targetDate:'',notes:'Equivalent to under 24:00 for 3 miles.',order:4},
   {id:'goal-split',title:'Improve flexibility',category:'Mobility',target:'Front split progression',targetDate:'2026-12-31',notes:'Daily mobility with measurable split-gap progress, plus hips, hamstrings, adductors, shoulders and thoracic mobility.',order:5},
@@ -304,7 +304,20 @@ export async function saveMeasurement(value){
 }
 export async function deleteMeasurement(id){ return remove('measurements',id); }
 
-export async function getGoals(){ const v=await getAll('goals'); return v.sort((a,b)=>(a.order||99)-(b.order||99)); }
+export async function getGoals(){
+  const v=await getAll('goals');
+  let changed=false;
+  for(const g of v){
+    if(!g.role){
+      if(g.id==='goal-703') g.role='primary';
+      else if(g.id==='goal-weight') g.role='immediate';
+      else g.role='standard';
+      changed=true;
+    }
+  }
+  if(changed) for(const g of v) await put('goals',g);
+  return v.sort((a,b)=>(a.order||99)-(b.order||99));
+}
 export async function saveGoal(goal){ if(!goal.id)goal.id=uid('goal'); if(goal.order==null)goal.order=Date.now(); return put('goals',goal); }
 export async function deleteGoal(id){ return remove('goals',id); }
 
