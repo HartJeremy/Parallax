@@ -4,7 +4,7 @@ import {
   getCheckin, saveCheckin, getMeasurements, saveMeasurement, deleteMeasurement,
   getGoals, saveGoal, deleteGoal, getPhases, savePhase,
   exportDatabase, importDatabase, reseed, updateFutureTemplateSessions
-} from './db.js';
+} from './db.js?v=3';
 
 const $ = (sel, root=document) => root.querySelector(sel);
 const $$ = (sel, root=document) => [...root.querySelectorAll(sel)];
@@ -818,7 +818,9 @@ async function boot(){
   await initDB();
   state.settings=await getSettings();
   bindEvents();
-  if('serviceWorker' in navigator){ navigator.serviceWorker.register('./sw.js').catch(()=>{}); }
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.register('./sw.js').then(reg=>reg.update()).catch(()=>{});
+  }
   await renderGoals();
   await renderToday();
 }
