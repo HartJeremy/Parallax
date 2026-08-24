@@ -109,3 +109,7 @@ Use **Week > Edit weekly template** to change the recurring structure. Use **Edi
 ## Backup note
 
 Browser storage can be cleared by the user, browser, device reset or privacy settings. Until cloud sync is added, periodically use **Data > Export JSON backup**.
+
+## Changing the plan start date
+
+Open **Data → App settings → Plan start date**. The starter build is set to **August 26, 2026**. Dates before the selected start date are shown as **Pre-plan** and do not count as missed workouts. If you later move the start date, workouts that already contain completed or logged results are preserved.

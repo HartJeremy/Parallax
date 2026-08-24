@@ -148,7 +148,11 @@ async function renderToday(){
   $('#todayDate').textContent=state.selectedDate===todayIso?'Today':formatDate(state.selectedDate,{weekday:'long',month:'short',day:'numeric'});
   $('#todayTitle').textContent=formatDate(state.selectedDate,{weekday:'long',month:'long',day:'numeric'});
   const sessions=[...(day.sessions||[])].sort((a,b)=>(a.order||0)-(b.order||0));
-  $('#todaySessions').innerHTML=sessions.length?sessions.map(sessionCardHtml).join(''):'<section class="card"><p class="muted">No workouts planned for this day.</p></section>';
+  const emptyMessage=day.prePlan
+    ? `<section class="card"><p class="eyebrow">Pre-plan</p><h3>Training plan has not started yet</h3><p class="muted">Your plan begins ${formatDate(state.settings.planStartDate,{weekday:'long',month:'long',day:'numeric',year:'numeric'})}. Days before that date do not count as missed workouts.</p></section>`
+    : '<section class="card"><p class="muted">No workouts planned for this day.</p></section>';
+  $('#todaySessions').innerHTML=sessions.length?sessions.map(sessionCardHtml).join(''):emptyMessage;
+  $('#addTodaySessionBtn').classList.toggle('hidden',!!day.prePlan);
   const complete=sessions.filter(s=>s.status==='complete').length;
   const pct=sessions.length?Math.round(complete/sessions.length*100):0;
   $('#completionPct').textContent=`${pct}%`;
@@ -649,17 +653,24 @@ async function savePhaseForm(){
 
 async function renderData(){
   state.settings=await getSettings();
+  $('#planStartDateInput').value=state.settings.planStartDate||'2026-08-26';
   $('#weightUnitInput').value=state.settings.weightUnit||'lb';
   $('#distanceUnitInput').value=state.settings.distanceUnit||'mi';
   $('#autoExpandInput').checked=!!state.settings.autoExpand;
 }
 
 async function saveAppSettings(){
+  const newStart=$('#planStartDateInput').value;
+  if(!newStart) throw new Error('Plan start date is required.');
+  state.settings.planStartDate=newStart;
   state.settings.weightUnit=$('#weightUnitInput').value;
   state.settings.distanceUnit=$('#distanceUnitInput').value;
   state.settings.autoExpand=$('#autoExpandInput').checked;
   await saveSettings(state.settings);
-  showToast('Settings saved.');
+  // Re-rendering causes pre-plan/future generated days to reconcile against the new start date.
+  await renderToday();
+  await renderWeek();
+  showToast('Settings saved. Plan start updated.');
 }
 
 function downloadBlob(filename,content,type='application/json'){

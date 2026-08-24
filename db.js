@@ -168,6 +168,7 @@ const DEFAULT_SETTINGS = {
   weightUnit:'lb',
   distanceUnit:'mi',
   autoExpand:false,
+  planStartDate:'2026-08-26',
   weeklyTemplate:defaultWeeklyTemplate(),
   updatedAt:new Date().toISOString()
 };
@@ -204,7 +205,11 @@ export async function initDB(){
 }
 
 export async function getSettings(){
-  return (await get('settings','app')) || structuredClone(DEFAULT_SETTINGS);
+  const saved=(await get('settings','app')) || structuredClone(DEFAULT_SETTINGS);
+  // Lightweight settings migration for existing local installs.
+  if(!saved.planStartDate) saved.planStartDate=DEFAULT_SETTINGS.planStartDate;
+  if(!saved.weeklyTemplate) saved.weeklyTemplate=defaultWeeklyTemplate();
+  return saved;
 }
 export async function saveSettings(settings){
   settings.id='app'; settings.updatedAt=new Date().toISOString();
@@ -229,22 +234,48 @@ function makeSession(template,order){
   };
 }
 
+function hasRecordedWork(day){
+  return !!day?.sessions?.some(s=>
+    s.status==='complete' ||
+    s.status==='skipped' ||
+    (s.actual && Object.values(s.actual).some(v=>v!==null && v!==undefined && v!==''))
+  );
+}
+
 export async function buildDayFromTemplate(date, force=false){
-  if (!force){
-    const existing=await get('days',date);
-    if (existing) return existing;
-  }
   const settings=await getSettings();
+  const existing=await get('days',date);
+  if (!force && existing) {
+    // Dates before the configured plan start are not missed workouts.
+    // Preserve them only when the user actually recorded work there.
+    if(date < settings.planStartDate && !hasRecordedWork(existing)) {
+      const prePlan={date,sessions:[],prePlan:true,createdAt:existing.createdAt||new Date().toISOString(),updatedAt:new Date().toISOString()};
+      await put('days',prePlan);
+      return prePlan;
+    }
+    return existing;
+  }
+  if(date < settings.planStartDate){
+    const day={date,sessions:[],prePlan:true,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+    await put('days',day);
+    return day;
+  }
   const weekday=parseDateOnly(date).getDay();
   const list=settings.weeklyTemplate?.[weekday] || [];
-  const day={date,sessions:list.map((s,i)=>makeSession(s,i)),createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+  const day={date,sessions:list.map((s,i)=>makeSession(s,i)),prePlan:false,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
   await put('days',day);
   return day;
 }
 
 export async function getDay(date,ensure=true){
   const day=await get('days',date);
-  if (day || !ensure) return day;
+  if (!ensure) return day;
+  const settings=await getSettings();
+  if(day){
+    if(date < settings.planStartDate && !hasRecordedWork(day) && !day.prePlan) return buildDayFromTemplate(date,true);
+    if(date >= settings.planStartDate && day.prePlan) return buildDayFromTemplate(date,true);
+    return day;
+  }
   return buildDayFromTemplate(date);
 }
 export async function saveDay(day){ day.updatedAt=new Date().toISOString(); return put('days',day); }

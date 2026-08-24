@@ -189,9 +189,11 @@
       <section class="card">
         <div class="card-heading compact-heading"><div><p class="eyebrow">Preferences</p><h3>App settings</h3></div></div>
         <div class="checkin-grid">
+          <label><span>Plan start date</span><input id="planStartDateInput" type="date" required></label>
           <label><span>Weight unit</span><select id="weightUnitInput"><option value="lb">Pounds (lb)</option></select></label>
           <label><span>Distance unit</span><select id="distanceUnitInput"><option value="mi">Miles</option></select></label>
         </div>
+        <p class="hint">Days before the plan start are treated as pre-plan, not missed workouts. Existing completed workout history is preserved.</p>
         <label class="toggle-control"><input id="autoExpandInput" type="checkbox"><span>Keep workout details expanded by default</span></label>
         <button id="saveSettingsBtn" class="primary compact-primary" type="button">Save settings</button>
       </section>
