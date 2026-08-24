@@ -12,7 +12,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon-192.png">
-  <link rel="stylesheet" href="styles.css?v=4">
+  <link rel="stylesheet" href="styles.css?v=5">
 </head>
 <body>
   <main class="app-shell">
@@ -75,6 +75,16 @@
         </div>
       </div>
 
+      <div class="plan-context-strip">
+        <span id="todayPhaseBadge" class="phase-status-pill">Current phase</span>
+        <span id="todayWeekBadge" class="phase-week-pill"></span>
+      </div>
+      <div class="program-filter" aria-label="Filter today workouts">
+        <button type="button" class="program-filter-btn active" data-program-filter="all">All</button>
+        <button type="button" class="program-filter-btn" data-program-filter="ironman">IRONMAN</button>
+        <button type="button" class="program-filter-btn" data-program-filter="other">Other goals</button>
+      </div>
+
       <div class="completion-card">
         <div>
           <strong id="completionPct">0%</strong>
@@ -113,11 +123,27 @@
         </div>
       </div>
 
+      <div class="plan-context-strip">
+        <span id="weekPhaseBadge" class="phase-status-pill">Current phase</span>
+        <span id="weekPhaseDetail" class="phase-week-pill"></span>
+      </div>
+      <div class="program-filter" aria-label="Filter weekly workouts">
+        <button type="button" class="program-filter-btn active" data-program-filter="all">All</button>
+        <button type="button" class="program-filter-btn" data-program-filter="ironman">IRONMAN</button>
+        <button type="button" class="program-filter-btn" data-program-filter="other">Other goals</button>
+      </div>
+
       <section class="week-summary card">
-        <div class="summary-stat"><span>Run</span><strong id="weekRunTotal">0 mi</strong></div>
-        <div class="summary-stat"><span>Bike</span><strong id="weekBikeTotal">0 min</strong></div>
-        <div class="summary-stat"><span>Strength</span><strong id="weekStrengthTotal">0</strong></div>
-        <div class="summary-stat"><span>Flexibility</span><strong id="weekFlexTotal">0</strong></div>
+        <div class="summary-stat"><span>Run</span><strong id="weekRunTotal">0 mi</strong><small id="weekRunActual">Actual 0 mi</small></div>
+        <div class="summary-stat"><span>Bike</span><strong id="weekBikeTotal">0 min</strong><small id="weekBikeActual">Actual 0 min</small></div>
+        <div class="summary-stat"><span>Swim</span><strong id="weekSwimTotal">0 yd</strong><small id="weekSwimActual">Actual 0 yd</small></div>
+        <div class="summary-stat"><span>Strength</span><strong id="weekStrengthTotal">0 sets</strong><small id="weekStrengthDetail">0 countable reps</small></div>
+        <div class="summary-stat"><span>Flexibility</span><strong id="weekFlexTotal">0 min</strong><small id="weekFlexActual">Actual 0 min</small></div>
+      </section>
+
+      <section class="card training-mix-card">
+        <div class="mix-stat ironman"><span>IRONMAN training</span><strong id="weekIronmanTime">0 min</strong><small id="weekIronmanActual">Actual 0 min</small></div>
+        <div class="mix-stat other"><span>Other goals</span><strong id="weekOtherTime">0 min</strong><small id="weekOtherActual">Actual 0 min</small></div>
       </section>
 
       <div id="weekGrid" class="week-grid"></div>
@@ -213,6 +239,13 @@
         <button id="saveSettingsBtn" class="primary compact-primary" type="button">Save settings</button>
       </section>
 
+      <section class="card">
+        <div class="card-heading compact-heading"><div><p class="eyebrow">Coaching plan</p><h3>Plan engine</h3></div><span id="planVersionText" class="status-pill">v5</span></div>
+        <p class="muted">Through December, workouts are tagged as Other goals while the focus is definition, flexibility, strength, and aerobic base. Formal IRONMAN training begins January 4, 2027. Race-specific phases are generated from the primary 70.3 race date when you set it.</p>
+        <button id="rebuildPlanBtn" class="secondary" type="button">Rebuild future plan</button>
+        <p class="hint">Completed and logged workouts are preserved. Only unrecorded future days are regenerated.</p>
+      </section>
+
       <section class="card danger-card">
         <div class="card-heading compact-heading"><div><p class="eyebrow danger-text">Reset</p><h3>Clear local data</h3></div></div>
         <p class="muted">This deletes workouts, check-ins, measurements, goals and plan edits from this device.</p>
@@ -229,8 +262,10 @@
       <div class="form-grid">
         <label><span>Title</span><input id="sessionTitleInput" required maxlength="80"></label>
         <label><span>Type</span><select id="sessionTypeInput"><option value="group">Group workout</option><option value="run">Run</option><option value="bike">Bike</option><option value="strength">Strength</option><option value="flexibility">Flexibility</option><option value="swim">Swim / dryland</option><option value="skill">Skill</option><option value="recovery">Recovery</option><option value="other">Other</option></select></label>
+        <label><span>Training track</span><select id="sessionProgramInput"><option value="other">Other goals</option><option value="ironman">IRONMAN training</option></select></label>
         <label><span>Planned duration (min)</span><input id="sessionDurationInput" type="number" min="0" max="600" step="1"></label>
-        <label><span>Planned distance</span><input id="sessionDistanceInput" type="number" min="0" max="500" step="0.1"></label>
+        <label><span>Planned distance</span><input id="sessionDistanceInput" type="number" min="0" max="10000" step="0.1"></label>
+        <label><span>Distance unit</span><select id="sessionDistanceUnitInput"><option value="mi">Miles</option><option value="yd">Yards</option><option value="m">Meters</option><option value="km">Kilometers</option></select></label>
       </div>
       <label class="block-label"><span>Summary</span><input id="sessionSummaryInput" maxlength="140" placeholder="Short line shown when card is collapsed"></label>
       <label class="block-label"><span>Instructions</span><textarea id="sessionInstructionsInput" rows="8" placeholder="One instruction per line"></textarea></label>
@@ -307,8 +342,8 @@
 
   <dialog id="templateDialog" class="modal wide-modal">
     <form id="templateForm" method="dialog" class="modal-card">
-      <div class="modal-head"><div><p class="eyebrow">Plan</p><h2>Edit weekly template</h2></div><button class="icon-btn modal-close" value="cancel" type="button" aria-label="Close">×</button></div>
-      <p class="muted">This controls future weeks. Edit individual days from the Today or Week screen when you need an exception.</p>
+      <div class="modal-head"><div><p class="eyebrow">Plan</p><h2 id="templateDialogTitle">Edit weekly template</h2></div><button class="icon-btn modal-close" value="cancel" type="button" aria-label="Close">×</button></div>
+      <p id="templatePlanDescription" class="muted">This controls future weeks in the selected training phase. Edit individual days from the Today or Week screen when you need an exception.</p>
       <div id="templateEditor" class="template-editor"></div>
       <div class="modal-actions"><button class="secondary modal-close" value="cancel" type="button">Cancel</button><button class="primary" type="submit">Save weekly template</button></div>
     </form>
@@ -316,6 +351,6 @@
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <script type="module" src="app.js?v=4"></script>
+  <script type="module" src="app.js?v=5"></script>
 </body>
 </html>

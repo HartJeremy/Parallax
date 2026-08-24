@@ -2,9 +2,10 @@ import {
   initDB, uid, isoDate, parseDateOnly, addDays,
   getSettings, saveSettings, getDay, saveDay, resetDayFromTemplate, getDaysRange, getAllDays,
   getCheckin, saveCheckin, getMeasurements, saveMeasurement, deleteMeasurement,
-  getGoals, saveGoal, deleteGoal, getPhases, savePhase,
-  exportDatabase, importDatabase, reseed, updateFutureTemplateSessions
-} from './db.js?v=4';
+  getGoals, saveGoal, deleteGoal, getPhases, savePhase, getResolvedPhases, getPlanContext, rebuildFuturePlan,
+  exportDatabase, importDatabase, reseed, updateFutureTemplateSessions, PLAN_VERSION
+} from './db.js?v=5';
+import { strengthVolumeFromInstructions, programLabel, PROGRAM_IRONMAN, PROGRAM_OTHER } from './plan.js?v=5';
 
 const $ = (sel, root=document) => root.querySelector(sel);
 const $$ = (sel, root=document) => [...root.querySelectorAll(sel)];
@@ -18,6 +19,9 @@ const state = {
   sessionMode:'day',
   templateEdit:null,
   workingTemplate:null,
+  templatePlanKey:'',
+  templatePhaseName:'',
+  programFilter:'all',
   installPrompt:null,
   toastTimer:null
 };
@@ -42,7 +46,7 @@ function formatRange(start,end){
   const s=parseDateOnly(start), e=parseDateOnly(end);
   const sf=new Intl.DateTimeFormat('en-US',{month:'short',day:'numeric'}).format(s);
   const ef=new Intl.DateTimeFormat('en-US',{month:'short',day:'numeric',year:'numeric'}).format(e);
-  return `${sf} – ${ef}`;
+  return `${sf} - ${ef}`;
 }
 
 function escapeHtml(value=''){
@@ -75,10 +79,20 @@ function typeLabel(type){
 
 function durationLabel(minutes){ return minutes?`${minutes} min`:''; }
 
+function sessionDistanceUnit(session){
+  return session.planned?.distanceUnit || (session.type==='swim'?'yd':state.settings?.distanceUnit||'mi');
+}
+
+function sessionProgram(session,date=''){
+  if(session.program) return session.program;
+  if(date>='2027-01-04' && ['run','bike','swim'].includes(session.type)) return PROGRAM_IRONMAN;
+  return PROGRAM_OTHER;
+}
+
 function plannedMeta(session){
   const items=[];
   if(session.planned?.durationMin) items.push(durationLabel(session.planned.durationMin));
-  if(session.planned?.distance) items.push(`${session.planned.distance} ${state.settings?.distanceUnit||'mi'}`);
+  if(session.planned?.distance) items.push(`${session.planned.distance} ${sessionDistanceUnit(session)}`);
   if(session.planned?.hrTarget) items.push(session.planned.hrTarget);
   return items;
 }
@@ -86,7 +100,7 @@ function plannedMeta(session){
 function actualSummary(session){
   const a=session.actual||{};
   const parts=[];
-  if(a.distance) parts.push(`${a.distance} ${state.settings?.distanceUnit||'mi'}`);
+  if(a.distance) parts.push(`${a.distance} ${a.distanceUnit||sessionDistanceUnit(session)}`);
   if(a.durationMin) parts.push(`${a.durationMin} min`);
   if(a.avgHr) parts.push(`${a.avgHr} avg HR`);
   if(a.rpe) parts.push(`RPE ${a.rpe}`);
@@ -121,7 +135,7 @@ function sessionCardHtml(session){
       <div class="session-head">
         <input class="session-check" type="checkbox" aria-label="Mark ${escapeHtml(session.title)} complete" ${session.status==='complete'?'checked':''}>
         <button class="session-main-btn" type="button" aria-expanded="${state.settings?.autoExpand?'true':'false'}">
-          <span class="session-title">${escapeHtml(session.title)} <span class="type-pill">${typeLabel(session.type)}</span></span>
+          <span class="session-title">${escapeHtml(session.title)} <span class="type-pill">${typeLabel(session.type)}</span> <span class="program-pill ${sessionProgram(session)}">${escapeHtml(programLabel(sessionProgram(session)))}</span></span>
           <span class="session-summary">${escapeHtml(session.summary||'Tap for workout details')}</span>
           ${actual?`<span class="session-summary">Logged: ${escapeHtml(actual)}</span>`:''}
         </button>
@@ -143,16 +157,39 @@ function sessionCardHtml(session){
     </article>`;
 }
 
+function matchesProgram(session,date){
+  return state.programFilter==='all' || sessionProgram(session,date)===state.programFilter;
+}
+
+function syncProgramFilterButtons(){
+  $$('.program-filter-btn').forEach(btn=>btn.classList.toggle('active',btn.dataset.programFilter===state.programFilter));
+}
+
+function phaseStatusText(context){
+  if(!context || context.name==='Pre-plan') return 'Pre-plan';
+  return context.name;
+}
+
 async function renderToday(){
-  const day=await getDay(state.selectedDate,true);
+  const [day,context]=await Promise.all([getDay(state.selectedDate,true),getPlanContext(state.selectedDate)]);
   $('#todayDate').textContent=state.selectedDate===todayIso?'Today':formatDate(state.selectedDate,{weekday:'long',month:'short',day:'numeric'});
   $('#todayTitle').textContent=formatDate(state.selectedDate,{weekday:'long',month:'long',day:'numeric'});
+  $('#todayPhaseBadge').textContent=phaseStatusText(context);
+  $('#todayPhaseBadge').classList.toggle('ironman',context.program==='ironman');
+  $('#todayPhaseBadge').classList.toggle('other',context.program!=='ironman');
+  $('#todayWeekBadge').textContent=day.prePlan?'Not started':`Week ${context.weekIndex}${context.isRecoveryWeek?' · Recovery load':' · Build load'}`;
+  syncProgramFilterButtons();
+
   const sessions=[...(day.sessions||[])].sort((a,b)=>(a.order||0)-(b.order||0));
+  const visible=sessions.filter(session=>matchesProgram(session,state.selectedDate));
   const emptyMessage=day.prePlan
     ? `<section class="card"><p class="eyebrow">Pre-plan</p><h3>Training plan has not started yet</h3><p class="muted">Your plan begins ${formatDate(state.settings.planStartDate,{weekday:'long',month:'long',day:'numeric',year:'numeric'})}. Days before that date do not count as missed workouts.</p></section>`
-    : '<section class="card"><p class="muted">No workouts planned for this day.</p></section>';
-  $('#todaySessions').innerHTML=sessions.length?sessions.map(sessionCardHtml).join(''):emptyMessage;
+    : sessions.length && !visible.length
+      ? '<section class="card"><p class="muted">No workouts on this day match the selected training track.</p></section>'
+      : '<section class="card"><p class="muted">No workouts planned for this day.</p></section>';
+  $('#todaySessions').innerHTML=visible.length?visible.map(sessionCardHtml).join(''):emptyMessage;
   $('#addTodaySessionBtn').classList.toggle('hidden',!!day.prePlan);
+
   const complete=sessions.filter(s=>s.status==='complete').length;
   const pct=sessions.length?Math.round(complete/sessions.length*100):0;
   $('#completionPct').textContent=`${pct}%`;
@@ -212,7 +249,7 @@ async function openDaySessionEditor(sessionId=null,date=state.selectedDate){
   let session=sessionId?findSession(day,sessionId):null;
   if(!session){
     const d=defaultNewSession('other');
-    session={id:'',templateId:uid('custom-template'),type:'other',title:d.title,summary:d.summary,planned:{durationMin:d.duration,distance:null,hrTarget:''},instructions:d.instructions,completionRule:d.completion};
+    session={id:'',templateId:uid('custom-template'),type:'other',program:'other',title:d.title,summary:d.summary,planned:{durationMin:d.duration,distance:null,distanceUnit:'mi',hrTarget:''},instructions:d.instructions,completionRule:d.completion};
   }
   fillSessionForm(session,date);
   $('#sessionScopeInput').closest('label').classList.toggle('hidden',!sessionId);
@@ -227,8 +264,10 @@ function fillSessionForm(session,date){
   $('#sessionDateInput').value=date;
   $('#sessionTitleInput').value=session.title||'';
   $('#sessionTypeInput').value=session.type||'other';
+  $('#sessionProgramInput').value=session.program||'other';
   $('#sessionDurationInput').value=session.planned?.durationMin??'';
   $('#sessionDistanceInput').value=session.planned?.distance??'';
+  $('#sessionDistanceUnitInput').value=session.planned?.distanceUnit||(session.type==='swim'?'yd':'mi');
   $('#sessionSummaryInput').value=session.summary||'';
   $('#sessionInstructionsInput').value=(session.instructions||[]).join('\n');
   $('#sessionMoveDateInput').value=date;
@@ -237,10 +276,14 @@ function fillSessionForm(session,date){
 
 function updateSessionFormDefaults(){
   if($('#sessionIdInput').value)return;
-  const d=defaultNewSession($('#sessionTypeInput').value);
+  const type=$('#sessionTypeInput').value;
+  const d=defaultNewSession(type);
   $('#sessionTitleInput').value=d.title;
   $('#sessionSummaryInput').value=d.summary;
   $('#sessionDurationInput').value=d.duration;
+  $('#sessionDistanceUnitInput').value=type==='swim'?'yd':'mi';
+  const ironmanTemplate=['tri-foundation','tri-base','race-base','race-build','race-peak','race-taper','race-day'].includes(state.templatePlanKey);
+  $('#sessionProgramInput').value=((state.sessionMode==='template'&&ironmanTemplate)||(state.sessionMode!=='template'&&state.selectedDate>='2027-01-04'))&&['run','bike','swim'].includes(type)?'ironman':'other';
   $('#sessionInstructionsInput').value=d.instructions.join('\n');
 }
 
@@ -250,11 +293,13 @@ async function saveSessionForm(){
   const type=$('#sessionTypeInput').value;
   const patch={
     type,
+    program:$('#sessionProgramInput').value||'other',
     title:$('#sessionTitleInput').value.trim(),
     summary:$('#sessionSummaryInput').value.trim(),
     planned:{
       durationMin:numberOrNull($('#sessionDurationInput').value),
       distance:numberOrNull($('#sessionDistanceInput').value),
+      distanceUnit:$('#sessionDistanceUnitInput').value||'mi',
       hrTarget:''
     },
     instructions:lines($('#sessionInstructionsInput').value),
@@ -267,9 +312,12 @@ async function saveSessionForm(){
     const existing=index>=0?state.workingTemplate[dayKey][index]:null;
     const d=defaultNewSession(type);
     const item={
+      ...(existing||{}),
       templateId:existing?.templateId||uid('template'),
       ...patch,
       planned:{...patch.planned,hrTarget:existing?.planned?.hrTarget||''},
+      countsTowardLoad:existing?.countsTowardLoad!==false,
+      progressive:existing?.progressive!==false,
       completionRule:existing?.completionRule||d.completion
     };
     if(index>=0) state.workingTemplate[dayKey][index]=item; else state.workingTemplate[dayKey].push(item);
@@ -282,15 +330,15 @@ async function saveSessionForm(){
   const day=await getDay(sourceDate,true);
   let session=id?findSession(day,id):null;
   if(session){
-    session.type=patch.type; session.title=patch.title; session.summary=patch.summary;
+    session.type=patch.type; session.program=patch.program; session.title=patch.title; session.summary=patch.summary;
     session.planned={...session.planned,...patch.planned};
     session.instructions=patch.instructions;
     session.updatedAt=new Date().toISOString();
   }else{
     const d=defaultNewSession(type);
     session={
-      id:uid('session'),templateId:uid('custom-template'),type:patch.type,title:patch.title,summary:patch.summary,
-      planned:{...patch.planned,hrTarget:''},instructions:patch.instructions,completionRule:d.completion,actual:{},status:'planned',
+      id:uid('session'),templateId:uid('custom-template'),type:patch.type,program:patch.program,title:patch.title,summary:patch.summary,
+      planned:{...patch.planned,hrTarget:''},instructions:patch.instructions,completionRule:d.completion,countsTowardLoad:true,planKey:day.planKey||'',actual:{},status:'planned',
       order:(day.sessions||[]).length,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()
     };
     day.sessions.push(session);
@@ -309,10 +357,11 @@ async function saveSessionForm(){
   }
 
   if(id && $('#sessionScopeInput').value==='future'){
-    await applyPatchToTemplate(session.templateId,session);
+    const planKey=session.planKey||day.planKey||'';
+    await applyPatchToTemplate(session.templateId,session,planKey);
     await updateFutureTemplateSessions(session.templateId,{
-      type:session.type,title:session.title,summary:session.summary,planned:session.planned,instructions:session.instructions,completionRule:session.completionRule
-    },sourceDate);
+      type:session.type,program:session.program,title:session.title,summary:session.summary,planned:session.planned,instructions:session.instructions,completionRule:session.completionRule
+    },sourceDate,planKey);
   }
   closeDialog($('#sessionDialog'));
   state.selectedDate=targetDate;
@@ -321,20 +370,26 @@ async function saveSessionForm(){
   await renderToday();
 }
 
-async function applyPatchToTemplate(templateId,session){
+async function applyPatchToTemplate(templateId,session,planKey){
   const settings=await getSettings();
+  const week=settings.phaseTemplates?.[planKey];
+  if(!week) return;
   let found=false;
-  for(const key of Object.keys(settings.weeklyTemplate||{})){
-    const idx=(settings.weeklyTemplate[key]||[]).findIndex(s=>s.templateId===templateId);
+  for(const key of Object.keys(week)){
+    const idx=(week[key]||[]).findIndex(s=>s.templateId===templateId);
     if(idx>=0){
-      settings.weeklyTemplate[key][idx]={
-        ...settings.weeklyTemplate[key][idx],type:session.type,title:session.title,summary:session.summary,
+      week[key][idx]={
+        ...week[key][idx],type:session.type,program:session.program,title:session.title,summary:session.summary,
         planned:structuredClone(session.planned),instructions:structuredClone(session.instructions),completionRule:session.completionRule
       };
       found=true;
     }
   }
-  if(found){ await saveSettings(settings); state.settings=settings; }
+  if(found){
+    settings.phaseTemplates[planKey]=week;
+    await saveSettings(settings);
+    state.settings=settings;
+  }
 }
 
 async function deleteCurrentSession(){
@@ -413,12 +468,12 @@ function logFieldsHtml(session){
   const a=session.actual||{};
   let html='';
   if(session.type!=='group') html+=field('Actual duration (min)','actualDuration','number',a.durationMin,'min="0" max="900" step="1"');
-  if(['run','swim'].includes(session.type)) html+=field(`Actual distance (${state.settings.distanceUnit})`,'actualDistance','number',a.distance,'min="0" max="500" step="0.01"');
+  if(['run','swim'].includes(session.type) || session.planned?.distance) html+=field(`Actual distance (${sessionDistanceUnit(session)})`,'actualDistance','number',a.distance,'min="0" max="10000" step="0.01"');
   if(['run','bike','swim'].includes(session.type)) html+=field('Average heart rate','actualHr','number',a.avgHr,'min="30" max="240" step="1"');
   if(session.type==='flexibility') html+=field('Front split gap (in, optional)','actualSplitGap','number',a.splitGap,'min="0" max="40" step="0.25"');
   if(session.type==='skill') html+=field('Best hold (sec, optional)','actualBestHold','number',a.bestHold,'min="0" max="600" step="0.1"');
   if(session.type==='strength') html+=field('Results (ex: 8/7/6)','actualResults','text',a.results,'maxlength="160"');
-  html+=field('Session RPE (1–10)','actualRpe','number',a.rpe,'min="1" max="10" step="1"');
+  html+=field('Session RPE (1-10)','actualRpe','number',a.rpe,'min="1" max="10" step="1"');
   return html;
 }
 
@@ -431,6 +486,7 @@ async function saveLogForm(){
   session.actual={
     durationMin:numberOrNull($('#actualDuration')?.value),
     distance:numberOrNull($('#actualDistance')?.value),
+    distanceUnit:sessionDistanceUnit(session),
     avgHr:numberOrNull($('#actualHr')?.value),
     splitGap:numberOrNull($('#actualSplitGap')?.value),
     bestHold:numberOrNull($('#actualBestHold')?.value),
@@ -447,27 +503,121 @@ async function saveLogForm(){
   await renderToday();
 }
 
+function actualOrPlannedDuration(session){
+  if(session.status!=='complete') return 0;
+  const actual=Number(session.actual?.durationMin);
+  if(session.actual?.loggedAt) return Number.isFinite(actual)&&actual>0?actual:0;
+  if(Number.isFinite(actual) && actual>0) return actual;
+  return Number(session.planned?.durationMin||0);
+}
+
+function actualOrPlannedDistance(session){
+  if(session.status!=='complete') return 0;
+  const actual=Number(session.actual?.distance);
+  if(session.actual?.loggedAt) return Number.isFinite(actual)&&actual>0?actual:0;
+  if(Number.isFinite(actual) && actual>0) return actual;
+  return Number(session.planned?.distance||0);
+}
+
+function distanceToYards(value,unit){
+  const n=Number(value||0);
+  if(!n) return 0;
+  if(unit==='yd') return n;
+  if(unit==='m') return n*1.09361;
+  if(unit==='km') return n*1093.61;
+  if(unit==='mi') return n*1760;
+  return n;
+}
+
+function formatMinutes(value){
+  const min=Math.round(Number(value||0));
+  if(min<60) return `${min} min`;
+  const h=Math.floor(min/60),m=min%60;
+  return m?`${h}h ${m}m`:`${h}h`;
+}
+
+function repRangeLabel(min,max){
+  if(!max) return '0 countable reps';
+  return min===max?`${Math.round(max)} countable reps`:`${Math.round(min)}-${Math.round(max)} countable reps`;
+}
+
 async function renderWeek(){
   const start=state.weekStart, end=addDays(start,6);
   $('#weekRange').textContent=formatRange(start,end);
   const days=await getDaysRange(start,end,true);
-  let run=0,bike=0,strength=0,flex=0;
+  syncProgramFilterButtons();
+
+  const phaseNames=[...new Set(days.filter(d=>!d.prePlan && d.phaseName).map(d=>d.phaseName))];
+  const firstDay=days.find(d=>!d.prePlan);
+  const context=firstDay?await getPlanContext(firstDay.date):await getPlanContext(start);
+  $('#weekPhaseBadge').textContent=phaseNames.length>1?`${phaseNames[0]} + transition`:phaseNames[0]||phaseStatusText(context);
+  $('#weekPhaseBadge').classList.toggle('ironman',days.some(d=>(d.sessions||[]).some(s=>sessionProgram(s,d.date)===PROGRAM_IRONMAN)));
+  $('#weekPhaseBadge').classList.toggle('other',!days.some(d=>(d.sessions||[]).some(s=>sessionProgram(s,d.date)===PROGRAM_IRONMAN)));
+  $('#weekPhaseDetail').textContent=firstDay?`Week ${firstDay.planWeek||context.weekIndex}${firstDay.recoveryWeek?' · Recovery load':' · Build load'}`:'Pre-plan';
+
+  let run=0,runActual=0,bike=0,bikeActual=0,swim=0,swimActual=0,flex=0,flexActual=0;
+  let strengthSets=0,strengthMin=0,strengthMax=0,strengthComplete=0,strengthSessions=0;
+  let ironmanPlanned=0,ironmanActual=0,otherPlanned=0,otherActual=0;
+
   for(const day of days){
     for(const s of day.sessions||[]){
-      if(s.type==='run')run+=Number(s.planned?.distance||0);
-      if(s.type==='bike')bike+=Number(s.planned?.durationMin||0);
-      if(s.type==='strength')strength++;
-      if(s.type==='flexibility')flex++;
+      const program=sessionProgram(s,day.date);
+      const plannedMinutes=s.countsTowardLoad===false?0:Number(s.planned?.durationMin||0);
+      const actualMinutes=s.countsTowardLoad===false?0:actualOrPlannedDuration(s);
+      if(program===PROGRAM_IRONMAN){ironmanPlanned+=plannedMinutes;ironmanActual+=actualMinutes;}
+      else {otherPlanned+=plannedMinutes;otherActual+=actualMinutes;}
+
+      if(!matchesProgram(s,day.date)) continue;
+      const unit=sessionDistanceUnit(s);
+      if(s.type==='run'){
+        const d=Number(s.planned?.distance||0);
+        if(unit==='mi') run+=d;
+        const a=actualOrPlannedDistance(s);
+        if(unit==='mi') runActual+=a;
+      }
+      if(s.type==='bike'){
+        bike+=Number(s.planned?.durationMin||0);
+        bikeActual+=actualOrPlannedDuration(s);
+      }
+      if(s.type==='swim'){
+        swim+=distanceToYards(s.planned?.distance,unit);
+        swimActual+=distanceToYards(actualOrPlannedDistance(s),unit);
+      }
+      if(s.type==='strength'){
+        strengthSessions++;
+        if(s.status==='complete') strengthComplete++;
+        const v=strengthVolumeFromInstructions(s.instructions||[]);
+        strengthSets+=v.sets;strengthMin+=v.minReps;strengthMax+=v.maxReps;
+      }
+      if(s.type==='flexibility'){
+        flex+=Number(s.planned?.durationMin||0);
+        flexActual+=actualOrPlannedDuration(s);
+      }
     }
   }
+
   $('#weekRunTotal').textContent=`${round1(run)} ${state.settings.distanceUnit}`;
-  $('#weekBikeTotal').textContent=`${Math.round(bike)} min`;
-  $('#weekStrengthTotal').textContent=String(strength);
-  $('#weekFlexTotal').textContent=String(flex);
+  $('#weekRunActual').textContent=`Actual ${round1(runActual)} ${state.settings.distanceUnit}`;
+  $('#weekBikeTotal').textContent=formatMinutes(bike);
+  $('#weekBikeActual').textContent=`Actual ${formatMinutes(bikeActual)}`;
+  $('#weekSwimTotal').textContent=`${Math.round(swim)} yd`;
+  $('#weekSwimActual').textContent=`Actual ${Math.round(swimActual)} yd`;
+  $('#weekStrengthTotal').textContent=`${strengthSets} sets`;
+  $('#weekStrengthDetail').textContent=`${repRangeLabel(strengthMin,strengthMax)} · ${strengthComplete}/${strengthSessions} sessions complete`;
+  $('#weekFlexTotal').textContent=formatMinutes(flex);
+  $('#weekFlexActual').textContent=`Actual ${formatMinutes(flexActual)}`;
+  $('#weekIronmanTime').textContent=formatMinutes(ironmanPlanned);
+  $('#weekIronmanActual').textContent=`Actual ${formatMinutes(ironmanActual)}`;
+  $('#weekOtherTime').textContent=formatMinutes(otherPlanned);
+  $('#weekOtherActual').textContent=`Actual ${formatMinutes(otherActual)}`;
+
   $('#weekGrid').innerHTML=days.map(day=>{
-    const complete=day.sessions.filter(s=>s.status==='complete').length;
-    const items=day.sessions.map(s=>`<div class="week-session ${s.status==='complete'?'done':''}"><b>${escapeHtml(s.title)}</b><span>${escapeHtml(s.summary||typeLabel(s.type))}</span></div>`).join('');
-    return `<article class="day-card ${day.date===todayIso?'today':''}" data-date="${day.date}"><div class="day-card-head"><button class="open-day-btn" type="button"><span class="day-name">${formatDate(day.date,{weekday:'short'})}</span><span class="day-date">${formatShortDate(day.date)}</span></button><span class="day-completion">${complete}/${day.sessions.length}</span></div><div class="day-sessions">${items||'<div class="week-session"><span>Rest day</span></div>'}</div></article>`;
+    const all=day.sessions||[];
+    const visible=all.filter(s=>matchesProgram(s,day.date));
+    const complete=all.filter(s=>s.status==='complete').length;
+    const items=visible.map(s=>`<div class="week-session ${s.status==='complete'?'done':''}"><div class="week-session-top"><b>${escapeHtml(s.title)}</b><span class="program-pill ${sessionProgram(s,day.date)}">${escapeHtml(programLabel(sessionProgram(s,day.date)))}</span></div><span>${escapeHtml(s.summary||typeLabel(s.type))}</span></div>`).join('');
+    const empty=all.length && !visible.length?'<div class="week-session"><span>No workouts in this track</span></div>':'<div class="week-session"><span>Rest day</span></div>';
+    return `<article class="day-card ${day.date===todayIso?'today':''}" data-date="${day.date}"><div class="day-card-head"><button class="open-day-btn" type="button"><span class="day-name">${formatDate(day.date,{weekday:'short'})}</span><span class="day-date">${formatShortDate(day.date)}</span></button><span class="day-completion">${complete}/${all.length}</span></div><div class="day-sessions">${items||empty}</div></article>`;
   }).join('');
 }
 
@@ -483,7 +633,14 @@ async function resetCurrentWeek(){
 
 async function openTemplateEditor(){
   state.settings=await getSettings();
-  state.workingTemplate=structuredClone(state.settings.weeklyTemplate||{});
+  const context=await getPlanContext(state.weekStart);
+  state.templatePlanKey=context.planKey;
+  state.templatePhaseName=context.name;
+  const source=state.settings.phaseTemplates?.[state.templatePlanKey];
+  if(!source){showToast('No editable weekly template is available for this phase.');return;}
+  state.workingTemplate=structuredClone(source);
+  $('#templateDialogTitle').textContent=`Edit ${context.name}`;
+  $('#templatePlanDescription').textContent=`This controls future unrecorded weeks in ${context.name}. The plan engine still applies progression and recovery-week scaling. Individual day edits remain available from Today or Week.`;
   renderTemplateEditor();
   showDialog($('#templateDialog'));
 }
@@ -492,7 +649,7 @@ function renderTemplateEditor(){
   const dayKeys=[1,2,3,4,5,6,0];
   const names={0:'Sunday',1:'Monday',2:'Tuesday',3:'Wednesday',4:'Thursday',5:'Friday',6:'Saturday'};
   $('#templateEditor').innerHTML=dayKeys.map(key=>{
-    const rows=(state.workingTemplate[key]||[]).map((s,i)=>`<div class="template-row"><span><strong>${escapeHtml(s.title)}</strong><small>${escapeHtml(s.summary||typeLabel(s.type))}</small></span><button type="button" class="template-edit-btn" data-day="${key}" data-index="${i}" aria-label="Edit ${escapeHtml(s.title)}">✎</button><button type="button" class="template-remove-btn" data-day="${key}" data-index="${i}" aria-label="Remove ${escapeHtml(s.title)}">×</button></div>`).join('');
+    const rows=(state.workingTemplate[key]||[]).map((s,i)=>`<div class="template-row"><span><strong>${escapeHtml(s.title)}</strong><small>${escapeHtml(s.summary||typeLabel(s.type))}</small><em class="program-pill ${s.program||'other'}">${escapeHtml(programLabel(s.program||'other'))}</em></span><button type="button" class="template-edit-btn" data-day="${key}" data-index="${i}" aria-label="Edit ${escapeHtml(s.title)}">✎</button><button type="button" class="template-remove-btn" data-day="${key}" data-index="${i}" aria-label="Remove ${escapeHtml(s.title)}">×</button></div>`).join('');
     return `<section class="template-day"><div class="template-day-head"><h3>${names[key]}</h3><button type="button" class="secondary template-add-btn" data-day="${key}">+ Add</button></div><div class="template-sessions">${rows||'<p class="muted">No planned workouts.</p>'}</div></section>`;
   }).join('');
 }
@@ -503,7 +660,8 @@ function openTemplateSession(dayKey,index=-1){
   let item=index>=0?state.workingTemplate[dayKey][index]:null;
   if(!item){
     const d=defaultNewSession('other');
-    item={id:'',templateId:'',type:'other',title:d.title,summary:d.summary,planned:{durationMin:d.duration,distance:null,hrTarget:''},instructions:d.instructions,completionRule:d.completion};
+    const program=['tri-foundation','tri-base','race-base','race-build','race-peak','race-taper','race-day'].includes(state.templatePlanKey)?'ironman':'other';
+    item={id:'',templateId:'',type:'other',program,title:d.title,summary:d.summary,planned:{durationMin:d.duration,distance:null,distanceUnit:'mi',hrTarget:''},instructions:d.instructions,completionRule:d.completion,countsTowardLoad:true,progressive:false};
   }
   closeDialog($('#templateDialog'));
   fillSessionForm(item,'');
@@ -515,10 +673,13 @@ function openTemplateSession(dayKey,index=-1){
 }
 
 async function saveTemplate(){
-  state.settings.weeklyTemplate=structuredClone(state.workingTemplate);
+  if(!state.templatePlanKey) throw new Error('No training phase selected.');
+  state.settings.phaseTemplates=state.settings.phaseTemplates||{};
+  state.settings.phaseTemplates[state.templatePlanKey]=structuredClone(state.workingTemplate);
   await saveSettings(state.settings);
+  await rebuildFuturePlan(state.weekStart);
   closeDialog($('#templateDialog'));
-  showToast('Weekly template saved for future days.');
+  showToast(`${state.templatePhaseName} template saved. Future unrecorded days were rebuilt.`);
   await renderWeek();
 }
 
@@ -535,23 +696,27 @@ async function renderProgress(){
   const start7=addDays(todayIso,-6), start30=addDays(todayIso,-29);
   const days7=days.filter(d=>d.date>=start7&&d.date<=todayIso);
   const days30=days.filter(d=>d.date>=start30&&d.date<=todayIso);
-  const sessions7=days7.flatMap(d=>d.sessions||[]);
-  const sessions30=days30.flatMap(d=>d.sessions||[]);
+  const sessions7=days7.flatMap(d=>(d.sessions||[]).map(s=>({...s,_date:d.date})));
+  const sessions30=days30.flatMap(d=>(d.sessions||[]).map(s=>({...s,_date:d.date})));
   const planned30=sessions30.filter(s=>s.status!=='skipped').length;
   const complete30=sessions30.filter(s=>s.status==='complete').length;
   const compliance=planned30?Math.round(complete30/planned30*100):0;
-  const run7=sessions7.filter(s=>s.type==='run').reduce((sum,s)=>sum+completedValue(s,'distance'),0);
+  const run7=sessions7.filter(s=>s.type==='run'&&sessionDistanceUnit(s)==='mi').reduce((sum,s)=>sum+completedValue(s,'distance'),0);
   const bike7=sessions7.filter(s=>s.type==='bike').reduce((sum,s)=>sum+completedValue(s,'durationMin'),0);
   const strength7=sessions7.filter(s=>s.type==='strength'&&s.status==='complete').length;
   const flex7=sessions7.filter(s=>s.type==='flexibility'&&s.status==='complete').length;
+  const ironman7=sessions7.filter(s=>sessionProgram(s,s._date)===PROGRAM_IRONMAN&&s.countsTowardLoad!==false).reduce((sum,s)=>sum+actualOrPlannedDuration(s),0);
+  const other7=sessions7.filter(s=>sessionProgram(s,s._date)!==PROGRAM_IRONMAN&&s.countsTowardLoad!==false).reduce((sum,s)=>sum+actualOrPlannedDuration(s),0);
   const latest=measurements.at(-1)||{};
   const metrics=[
     ['30-day completion',`${compliance}%`,`${complete30} of ${planned30} planned sessions`],
     ['Run · 7 days',`${round1(run7)} ${state.settings.distanceUnit}`,'Completed distance'],
-    ['Bike · 7 days',`${Math.round(bike7)} min`,'Completed time'],
+    ['Bike · 7 days',formatMinutes(bike7),'Completed time'],
+    ['IRONMAN · 7 days',formatMinutes(ironman7),'Completed formal triathlon training'],
+    ['Other goals · 7 days',formatMinutes(other7),'Completed strength, mobility, skills, and prep'],
     ['Strength · 7 days',String(strength7),'Completed sessions'],
     ['Flexibility · 7 days',String(flex7),'Completed sessions'],
-    ['Weight',latest.weight?`${latest.weight} ${state.settings.weightUnit}`:'—',latest.date?`Last entry ${formatShortDate(latest.date)}`:'Add a measurement']
+    ['Weight',latest.weight?`${latest.weight} ${state.settings.weightUnit}`:'-',latest.date?`Last entry ${formatShortDate(latest.date)}`:'Add a measurement']
   ];
   $('#progressMetrics').innerHTML=metrics.map(([label,value,sub])=>`<div class="metric-card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(sub)}</small></div>`).join('');
   renderVolumeChart(days);
@@ -620,17 +785,25 @@ async function saveMeasurementForm(){
 }
 
 async function renderGoals(){
-  const [goals,phases]=await Promise.all([getGoals(),getPhases()]);
-  const phase=phases.find(p=>todayIso>=p.startDate&&todayIso<=p.endDate)||phases[0];
+  const [goals,staticPhases,phases,phase]=await Promise.all([getGoals(),getPhases(),getResolvedPhases(),getPlanContext(todayIso)]);
   if(phase){
     $('#currentPhaseName').textContent=phase.name;
-    $('#currentPhaseDates').textContent=`${formatShortDate(phase.startDate)} – ${formatShortDate(phase.endDate)}`;
+    const dateText=phase.endDate?`${formatShortDate(phase.startDate)} - ${formatShortDate(phase.endDate)}`:`From ${formatShortDate(phase.startDate)} · race date dependent`;
+    $('#currentPhaseDates').textContent=`${dateText}${phase.isRecoveryWeek?' · Recovery load':''}`;
     $('#currentPhaseFocus').innerHTML=(phase.focus||[]).map(f=>`<span class="focus-pill">${escapeHtml(f)}</span>`).join('');
-    $('#editPhaseBtn').dataset.phaseId=phase.id;
+    const editable=staticPhases.some(p=>p.id===phase.id);
+    $('#editPhaseBtn').classList.toggle('hidden',!editable);
+    $('#editPhaseBtn').dataset.phaseId=editable?phase.id:'';
   }
   renderGoalDashboard(goals,phase);
   $('#goalList').innerHTML=goals.map(g=>`<article class="goal-card" data-goal-id="${g.id}"><div class="goal-top"><div><span class="type-pill">${escapeHtml(g.category)}</span>${g.role&&g.role!=='standard'?`<span class="goal-role-pill ${g.role}">${escapeHtml(g.role)}</span>`:''}<h3>${escapeHtml(g.title)}</h3></div><button class="text-btn edit-goal-btn" type="button">Edit</button></div><div class="goal-target">${escapeHtml(g.target||'')}</div>${g.notes?`<p>${escapeHtml(g.notes)}</p>`:''}${g.targetDate?`<p>Target: ${formatDate(g.targetDate,{month:'short',day:'numeric',year:'numeric'})}</p>`:''}</article>`).join('');
-  $('#phaseTimeline').innerHTML=phases.map(p=>`<div class="timeline-item"><span class="timeline-dot"></span><div class="timeline-copy"><strong>${escapeHtml(p.name)}</strong><span>${formatShortDate(p.startDate)} – ${formatShortDate(p.endDate)} · ${(p.focus||[]).map(escapeHtml).join(' · ')}</span></div></div>`).join('');
+  const raceGoal=goals.find(g=>g.id==='goal-703');
+  const timeline=phases.map(p=>{
+    const dates=p.endDate?`${formatShortDate(p.startDate)} - ${formatShortDate(p.endDate)}`:`From ${formatShortDate(p.startDate)} - race date dependent`;
+    return `<div class="timeline-item"><span class="timeline-dot ${p.program==='ironman'?'ironman':'other'}"></span><div class="timeline-copy"><strong>${escapeHtml(p.name)} <span class="program-pill ${p.program==='ironman'?'ironman':'other'}">${escapeHtml(p.program==='ironman'?'IRONMAN training':'Other goals')}</span></strong><span>${escapeHtml(dates)} · ${(p.focus||[]).map(escapeHtml).join(' · ')}</span></div></div>`;
+  }).join('');
+  const raceNote=!raceGoal?.targetDate?'<div class="timeline-note">Set the exact race date on the IRONMAN 70.3 Maine goal when it is announced. The app will then create the 20-week race-specific Base, Build, Peak, and Taper dates automatically.</div>':'';
+  $('#phaseTimeline').innerHTML=timeline+raceNote;
 }
 
 async function openGoalEditor(id=null){
@@ -655,13 +828,16 @@ async function saveGoalForm(){
   const goals=await getGoals();
   if(role==='primary'||role==='immediate'){
     for(const g of goals){
-      if(g.id!==id && g.role===role){ g.role='standard'; await saveGoal(g); }
+      if(g.id!==id && g.role===role){g.role='standard';await saveGoal(g);}
     }
   }
-  await saveGoal({id:id||undefined,title:$('#goalTitleInput').value.trim(),category:$('#goalCategoryInput').value,target:$('#goalTargetInput').value.trim(),targetDate:$('#goalDateInput').value,role,notes:$('#goalNotesInput').value.trim(),order:id?goals.find(g=>g.id===id)?.order:Date.now()});
+  const saved=await saveGoal({id:id||undefined,title:$('#goalTitleInput').value.trim(),category:$('#goalCategoryInput').value,target:$('#goalTargetInput').value.trim(),targetDate:$('#goalDateInput').value,role,notes:$('#goalNotesInput').value.trim(),order:id?goals.find(g=>g.id===id)?.order:Date.now()});
+  if(saved.id==='goal-703' || role==='primary') await rebuildFuturePlan(todayIso);
   closeDialog($('#goalDialog'));
-  showToast('Goal saved.');
+  showToast(saved.id==='goal-703'?'Goal saved. Future race plan recalculated.':'Goal saved.');
   await renderGoals();
+  if(state.page==='today') await renderToday();
+  if(state.page==='week') await renderWeek();
 }
 
 async function deleteCurrentGoal(){
@@ -686,8 +862,11 @@ async function savePhaseForm(){
   const id=$('#phaseIdInput').value;
   const phases=await getPhases();
   const existing=phases.find(p=>p.id===id);
-  await savePhase({id,name:$('#phaseNameInput').value.trim(),startDate:$('#phaseStartInput').value,endDate:$('#phaseEndInput').value,focus:$('#phaseFocusInput').value.split(',').map(s=>s.trim()).filter(Boolean),notes:$('#phaseNotesInput').value.trim(),order:existing?.order||1});
-  closeDialog($('#phaseDialog')); showToast('Training phase saved.'); await renderGoals();
+  await savePhase({...(existing||{}),id,name:$('#phaseNameInput').value.trim(),startDate:$('#phaseStartInput').value,endDate:$('#phaseEndInput').value,focus:$('#phaseFocusInput').value.split(',').map(s=>s.trim()).filter(Boolean),notes:$('#phaseNotesInput').value.trim(),order:existing?.order||1});
+  await rebuildFuturePlan(existing?.startDate||todayIso);
+  closeDialog($('#phaseDialog'));
+  showToast('Training phase saved. Future plan rebuilt.');
+  await renderGoals();
 }
 
 async function renderData(){
@@ -696,6 +875,15 @@ async function renderData(){
   $('#weightUnitInput').value=state.settings.weightUnit||'lb';
   $('#distanceUnitInput').value=state.settings.distanceUnit||'mi';
   $('#autoExpandInput').checked=!!state.settings.autoExpand;
+  $('#planVersionText').textContent=`v${PLAN_VERSION}`;
+}
+
+async function rebuildPlanFromToday(){
+  if(!confirm('Rebuild all unrecorded future days from the current coaching plan? Completed and logged workouts will be preserved.')) return;
+  await rebuildFuturePlan(todayIso);
+  showToast('Future plan rebuilt.');
+  await renderToday();
+  await renderWeek();
 }
 
 async function saveAppSettings(){
@@ -727,10 +915,10 @@ async function exportJson(){
 
 async function exportCsv(){
   const days=(await getAllDays()).sort((a,b)=>a.date.localeCompare(b.date));
-  const rows=[['Date','Workout','Type','Status','Planned Duration Min','Planned Distance','Actual Duration Min','Actual Distance','Average HR','RPE','Actual Results','Notes']];
+  const rows=[['Date','Phase','Plan Week','Training Track','Workout','Type','Status','Planned Duration Min','Planned Distance','Distance Unit','Actual Duration Min','Actual Distance','Average HR','RPE','Actual Results','Notes']];
   for(const day of days){
     for(const s of day.sessions||[]){
-      rows.push([day.date,s.title,s.type,s.status,s.planned?.durationMin??'',s.planned?.distance??'',s.actual?.durationMin??'',s.actual?.distance??'',s.actual?.avgHr??'',s.actual?.rpe??'',s.actual?.results??'',s.actual?.notes??'']);
+      rows.push([day.date,day.phaseName||s.phaseName||'',day.planWeek||s.planWeek||'',programLabel(sessionProgram(s,day.date)),s.title,s.type,s.status,s.planned?.durationMin??'',s.planned?.distance??'',sessionDistanceUnit(s),s.actual?.durationMin??'',s.actual?.distance??'',s.actual?.avgHr??'',s.actual?.rpe??'',s.actual?.results??'',s.actual?.notes??'']);
     }
   }
   const csv=rows.map(row=>row.map(csvCell).join(',')).join('\n');
@@ -772,6 +960,7 @@ function bindEvents(){
   $$('.nav-btn').forEach(btn=>btn.addEventListener('click',()=>setPage(btn.dataset.page)));
   $$('[data-nav="today"]').forEach(el=>el.addEventListener('click',e=>{e.preventDefault();setPage('today')}));
   $('#settingsBtn').addEventListener('click',()=>setPage('data'));
+  $$('.program-filter-btn').forEach(btn=>btn.addEventListener('click',()=>{state.programFilter=btn.dataset.programFilter||'all';syncProgramFilterButtons();renderCurrentPage().catch(err=>showToast(err.message));}));
 
   $('#prevDayBtn').addEventListener('click',async()=>{state.selectedDate=addDays(state.selectedDate,-1);state.weekStart=startOfWeek(state.selectedDate);await renderToday()});
   $('#nextDayBtn').addEventListener('click',async()=>{state.selectedDate=addDays(state.selectedDate,1);state.weekStart=startOfWeek(state.selectedDate);await renderToday()});
@@ -844,6 +1033,7 @@ function bindEvents(){
   $('#phaseForm').addEventListener('submit',e=>{e.preventDefault();savePhaseForm().catch(err=>showToast(err.message))});
 
   $('#saveSettingsBtn').addEventListener('click',()=>saveAppSettings().catch(err=>showToast(err.message)));
+  $('#rebuildPlanBtn').addEventListener('click',()=>rebuildPlanFromToday().catch(err=>showToast(err.message)));
   $('#exportJsonBtn').addEventListener('click',()=>exportJson().catch(err=>showToast(err.message)));
   $('#exportCsvBtn').addEventListener('click',()=>exportCsv().catch(err=>showToast(err.message)));
   $('#importJsonInput').addEventListener('change',e=>{const file=e.target.files?.[0];if(file)importJsonFile(file).catch(err=>showToast(err.message));e.target.value='';});
@@ -858,7 +1048,7 @@ async function boot(){
   state.settings=await getSettings();
   bindEvents();
   if('serviceWorker' in navigator){
-    navigator.serviceWorker.register('./sw.js').then(reg=>reg.update()).catch(()=>{});
+    navigator.serviceWorker.register('./sw.js',{updateViaCache:'none'}).then(reg=>reg.update()).catch(()=>{});
   }
   await renderGoals();
   await renderToday();
